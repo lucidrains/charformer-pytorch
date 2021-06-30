@@ -2,7 +2,9 @@
 
 ## Charformer - Pytorch (wip)
 
-Implementation of the GBST block from the <a href="https://arxiv.org/abs/2106.12672">Charformer paper</a>, in Pytorch. The paper proposes a module that automatically learns subword representations, obviating the need for tokenizers in the encoder setting.
+Implementation of the GBST (gradient-based subword tokenization) module from the <a href="https://arxiv.org/abs/2106.12672">Charformer paper</a>, in Pytorch. The paper proposes a module that automatically learns subword representations, obviating the need for tokenizers in the encoder setting.
+
+<a href="https://www.youtube.com/watch?v=debgj24BAZE">AI Coffee Break with Letitia video</a>
 
 ## Citations
 
