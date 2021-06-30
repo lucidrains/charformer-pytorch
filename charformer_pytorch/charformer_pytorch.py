@@ -83,7 +83,9 @@ class GBST(nn.Module):
 
         # compute representations for all blocks by mean pooling
 
+        block_masks = []
         block_reprs = []
+
         for block_size in self.block_sizes:
             pos_range = torch.arange(block_size, device = device)
             pos_emb = self.pos_emb(pos_range)
@@ -99,20 +101,39 @@ class GBST(nn.Module):
             else:
                 block_repr = blocks.mean(dim = -2)
 
-            block_repr = repeat(block_repr, 'b n d -> b (n r) d', r = block_size)
+            block_repr = repeat(block_repr, 'b n d -> b (n m) d', m = block_size)
             block_reprs.append(block_repr)
+
+            if exists(mask):
+                mask_blocks = torch.any(mask_blocks, dim = -1)
+                mask_blocks = repeat(mask_blocks, 'b n -> b (n m)', m = block_size)
+                block_masks.append(mask_blocks)
 
         block_reprs = torch.stack(block_reprs, dim = 2)
 
         # calculate scores and softmax across the block size dimension
 
         scores = self.score_fn(block_reprs)
+
+        if exists(mask):
+            block_masks = torch.stack(block_masks, dim = 2)
+            max_neg_value = -torch.finfo(scores.dtype).max
+            scores = scores.masked_fill(~block_masks, max_neg_value)
+
         scores = scores.softmax(dim = 2)
 
         # do the cheap consensus attention, eq (5) in paper
 
         if self.score_consensus_attn:
-            scores = einsum('b i d, b j d -> b i j', scores, scores).softmax(dim = -1) @ scores
+            score_sim = einsum('b i d, b j d -> b i j', scores, scores)
+
+            if exists(mask):
+                cross_mask = rearrange(mask, 'b i -> b i ()') * rearrange(mask, 'b j -> b () j')
+                max_neg_value = -torch.finfo(score_sim.dtype).max
+                score_sim = score_sim.masked_fill(~cross_mask, max_neg_value)
+
+            score_attn = score_sim.softmax(dim = -1)
+            scores = einsum('b i j, b j m -> b i m', score_attn, scores)
 
         # multiply the block representations by the position-wise scores
 

@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
   name = 'charformer-pytorch',
   packages = find_packages(),
-  version = '0.0.1',
+  version = '0.0.2',
   license='MIT',
   description = 'Charformer - Pytorch',
   author = 'Phil Wang',
