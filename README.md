@@ -32,6 +32,8 @@ mask   = torch.ones(1, 1023).bool()
 # both tokens and mask will be appropriately downsampled
 
 tokens, mask = tokenizer(tokens, mask = mask) # (1, 256, 512), (1, 256)
+
+# now pass this on to your transformer
 ```
 
 ## Citations
