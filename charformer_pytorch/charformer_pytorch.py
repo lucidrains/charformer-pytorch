@@ -38,6 +38,27 @@ def pad_to_multiple(tensor, multiple, *, seq_dim, dim = -1, value = 0.):
     pad_offset = (0,) * (-1 - dim) * 2
     return F.pad(tensor, (*pad_offset, 0, remainder), value = value)
 
+# helper classes
+
+class Pad(nn.Module):
+    def __init__(self, padding, value = 0.):
+        super().__init__()
+        self.padding = padding
+        self.value = value
+
+    def forward(self, x):
+        return F.pad(x, self.padding, value = self.value)
+
+class DepthwiseConv1d(nn.Module):
+    def __init__(self, dim_in, dim_out, kernel_size):
+        super().__init__()
+        self.conv = nn.Conv1d(dim_in, dim_out, kernel_size, groups = dim_in)
+        self.proj_out = nn.Conv1d(dim_out, dim_out, 1)
+
+    def forward(self, x):
+        x = self.conv(x)
+        return self.proj_out(x)
+
 # main class
 
 class GBST(nn.Module):
@@ -51,8 +72,14 @@ class GBST(nn.Module):
         score_consensus_attn = True
     ):
         super().__init__()
-        self.pos_emb = nn.Embedding(max_block_size, dim)
         self.token_emb = nn.Embedding(num_tokens, dim)
+
+        self.pos_conv = nn.Sequential(
+            Pad((0, 0, 0, max_block_size - 1)),
+            Rearrange('b n d -> b d n'),
+            DepthwiseConv1d(dim, dim, kernel_size = max_block_size),
+            Rearrange('b d n -> b n d')
+        )
 
         self.score_fn = nn.Sequential(
             nn.Linear(dim, 1),
@@ -74,6 +101,10 @@ class GBST(nn.Module):
 
         x = self.token_emb(x)
 
+        # do a conv to generate the positions for the tokens
+
+        x = self.pos_conv(x)
+
         # pad both sequence and mask to length visibile by all block sizes from 0 to max block size
 
         x = pad_to_multiple(x, block_mult, seq_dim = 1, dim = -2)
@@ -87,13 +118,7 @@ class GBST(nn.Module):
         block_reprs = []
 
         for block_size in self.block_sizes:
-            pos_range = torch.arange(block_size, device = device)
-            pos_emb = self.pos_emb(pos_range)
-
             blocks = rearrange(x, 'b (n m) d -> b n m d', m = block_size)
-            pos_emb = repeat(pos_emb, 'm d -> b n m d', b = b, n = blocks.shape[1])
-
-            blocks = blocks + pos_emb # add intra-block positional embedding
 
             if exists(mask):
                 mask_blocks = rearrange(mask, 'b (n m) -> b n m', m = block_size)
