@@ -67,12 +67,23 @@ class GBST(nn.Module):
         *,
         num_tokens,
         dim,
-        max_block_size = 4,
+        max_block_size = None,
+        blocks = None,
         downsample_factor = 4,
         score_consensus_attn = True
     ):
         super().__init__()
+        assert exists(max_block_size) ^ exists(blocks), 'either max_block_size or blocks are given on initialization'
         self.token_emb = nn.Embedding(num_tokens, dim)
+
+        if exists(blocks):
+            assert isinstance(blocks, tuple), 'blocks must be a tuple of block sizes'
+            self.blocks = tuple(map(lambda el: el if isinstance(el, tuple) else (el, 0), blocks))
+            assert all([(offset < block_size) for block_size, offset in self.blocks]), 'offset must be always smaller than the block size'
+
+            max_block_size = max(list(map(lambda t: t[0], self.blocks)))
+        else:
+            self.blocks = tuple(map(lambda el: (el, 0), range(1, max_block_size + 1)))
 
         self.pos_conv = nn.Sequential(
             Pad((0, 0, 0, max_block_size - 1)),
@@ -89,8 +100,8 @@ class GBST(nn.Module):
         self.score_consensus_attn = score_consensus_attn
 
         assert downsample_factor <= max_block_size, 'final downsample factor should be less than the maximum block size'
-        self.block_sizes = [*range(1, max_block_size + 1)]
-        self.block_pad_multiple = lcm(*self.block_sizes)
+
+        self.block_pad_multiple = lcm(*[block_size for block_size, _ in self.blocks])
         self.downsample_factor = downsample_factor
 
     def forward(self, x, mask = None):
@@ -117,22 +128,56 @@ class GBST(nn.Module):
         block_masks = []
         block_reprs = []
 
-        for block_size in self.block_sizes:
-            blocks = rearrange(x, 'b (n m) d -> b n m d', m = block_size)
+        for block_size, offset in self.blocks:
+            # clone the input sequence as well as the mask, in order to pad for offsets
+
+            block_x = x.clone()
 
             if exists(mask):
-                mask_blocks = rearrange(mask, 'b (n m) -> b n m', m = block_size)
+                block_mask = mask.clone()
+
+            # pad for offsets, if needed
+
+            need_padding = offset > 0
+
+            if need_padding:
+                left_offset, right_offset = (block_size - offset), offset
+                block_x = F.pad(block_x, (0, 0, left_offset, right_offset), value = 0.)
+
+                if exists(mask):
+                    block_mask = F.pad(block_mask, (left_offset, right_offset), value = False)
+
+            # group input sequence into blocks
+
+            blocks = rearrange(block_x, 'b (n m) d -> b n m d', m = block_size)
+
+            # either mean pool the blocks, or do a masked mean
+
+            if exists(mask):
+                mask_blocks = rearrange(block_mask, 'b (n m) -> b n m', m = block_size)
                 block_repr = masked_mean(blocks, mask_blocks, dim = -2)
             else:
                 block_repr = blocks.mean(dim = -2)
 
+            # append the block representations, as well as the pooled block masks
+
             block_repr = repeat(block_repr, 'b n d -> b (n m) d', m = block_size)
+
+            if need_padding:
+                block_repr = block_repr[:, left_offset:-right_offset]
+
             block_reprs.append(block_repr)
 
             if exists(mask):
                 mask_blocks = torch.any(mask_blocks, dim = -1)
                 mask_blocks = repeat(mask_blocks, 'b n -> b (n m)', m = block_size)
+
+                if need_padding:
+                    mask_blocks = mask_blocks[:, left_offset:-right_offset]
+
                 block_masks.append(mask_blocks)
+
+        # stack all the block representations
 
         block_reprs = torch.stack(block_reprs, dim = 2)
 

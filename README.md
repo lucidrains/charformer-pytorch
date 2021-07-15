@@ -36,6 +36,28 @@ tokens, mask = tokenizer(tokens, mask = mask) # (1, 256, 512), (1, 256)
 # now pass this on to your transformer
 ```
 
+Deviating from the paper, you can also specify each block size(s) with different offsets. This is to cover a potential use-case for genomics pre-training. Simply omit the `max_block_size`, and pass in `blocks` as a list of tuples of tuples, each tuple with the format `(block size, offset)`. Offsets must be less than the block size
+
+```python
+import torch
+from charformer_pytorch import GBST
+
+tokenizer = GBST(
+    num_tokens = 257,
+    dim = 512,
+    blocks = ((3, 0), (3, 1), (3, 2)),  # block size of 3, with offsets of 0, 1, 2
+    downsample_factor = 3,
+    score_consensus_attn = True
+).cuda()
+
+tokens = torch.randint(0, 257, (1, 1023)).cuda()
+mask   = torch.ones(1, 1023).bool().cuda()
+
+# both tokens and mask will be appropriately downsampled
+
+tokens, mask = tokenizer(tokens, mask = mask)
+```
+
 ## Citations
 
 ```bibtex
